@@ -173,3 +173,88 @@
 (define-private (get-last-proposal-id)
     none
 )
+
+;; Asset Management Functions
+
+(define-public (register-asset 
+    (metadata-uri (string-ascii 256)) 
+    (asset-value uint))
+    (begin
+        (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+        (asserts! (validate-metadata-uri metadata-uri) err-invalid-uri)
+        (asserts! (validate-asset-value asset-value) err-invalid-value)
+
+        (let 
+            ((asset-id (get-next-asset-id)))
+            (map-set assets
+                { asset-id: asset-id }
+                {
+                    owner: contract-owner,
+                    metadata-uri: metadata-uri,
+                    asset-value: asset-value,
+                    is-locked: false,
+                    creation-height: stacks-block-height,
+                    last-price-update: stacks-block-height,
+                    total-dividends: u0
+                }
+            )
+            (map-set token-balances
+                { owner: contract-owner, asset-id: asset-id }
+                { balance: tokens-per-asset }
+            )
+            (ok asset-id)
+        )
+    )
+)
+
+;; Dividend Functions
+
+(define-public (claim-dividends (asset-id uint))
+    (let
+        (
+            (asset (unwrap! (get-asset-info asset-id) err-not-found))
+            (balance (get-balance tx-sender asset-id))
+            (last-claim (get-last-claim asset-id tx-sender))
+            (total-dividends (get total-dividends asset))
+            (claimable-amount (/ (* balance (- total-dividends last-claim)) tokens-per-asset))
+        )
+        (asserts! (> claimable-amount u0) err-invalid-amount)
+		(asserts! (is-some (get-asset-info asset-id)) err-not-found)
+        (ok (map-set dividend-claims
+            { asset-id: asset-id, claimer: tx-sender }
+            { last-claimed-amount: total-dividends }
+        ))
+    )
+)
+
+;; Governance Functions
+
+(define-public (create-proposal 
+    (asset-id uint)
+    (title (string-ascii 256))
+    (duration uint)
+    (minimum-votes uint))
+    (begin
+        (asserts! (validate-duration duration) err-invalid-duration)
+        (asserts! (validate-minimum-votes minimum-votes) err-invalid-votes)
+        (asserts! (validate-metadata-uri title) err-invalid-title)
+        (asserts! (>= (get-balance tx-sender asset-id) (/ tokens-per-asset u10)) err-not-authorized)
+
+        (let
+            ((proposal-id (get-next-proposal-id)))
+            (ok (map-set proposals
+                { proposal-id: proposal-id }
+                {
+                    title: title,
+                    asset-id: asset-id,
+                    start-height: stacks-block-height,
+                    end-height: (+ stacks-block-height duration),
+                    executed: false,
+                    votes-for: u0,
+                    votes-against: u0,
+                    minimum-votes: minimum-votes
+                }
+            ))
+        )
+    )
+)
